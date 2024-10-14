@@ -1,0 +1,255 @@
+#include <cstdlib>
+#include <iostream>
+#include <map>
+#include <string>
+
+#include "TChain.h"
+#include "TFile.h"
+#include "TTree.h"
+#include "TString.h"
+#include "TObjString.h"
+#include "TSystem.h"
+#include "TROOT.h"
+
+#include "TMVA/Factory.h"
+#include "TMVA/DataLoader.h"
+#include "TMVA/Tools.h"
+#include "TMVA/TMVAGui.h"
+
+int muRWELL_Class()
+{
+  
+  bool Have_To_TnT = false;
+  bool Reader_Too  = true;
+  
+  if(Have_To_TnT == true) {
+    
+    TMVA::Tools::Instance();
+    
+    std::cout << "==> Let's start!" << std::endl;
+    
+    // --- Signal ---
+    TFile *input_s = TFile::Open("rootFiles/TRAIN_evt_runXXX.root");
+    if (!input_s) {
+      std::cout << "ERROR: could not open data file" << std::endl;
+      exit(1);
+    }
+    std::cout << "--- Signal: Using input file: " << input_s->GetName() << std::endl;
+    
+    // --- Noise ---
+    TFile *input_n= TFile::Open("rootFiles/TRAIN_evt_runXXX.root");
+    if (!input_n) {
+      std::cout << "ERROR: could not open noise file" << std::endl;
+      exit(1);
+    }
+    std::cout << "--- Background: Using input file: " << input_n->GetName() << std::endl;
+    
+    TTree *signalTree     = (TTree*)input_s->Get("t1");
+    TTree *noiseTree      = (TTree*)input_n->Get("t1");
+    
+    TFile* outputFile = TFile::Open("OutputClassification_Detector_w_Specifics.root", "RECREATE" );
+    
+    TMVA::Factory *factory = new TMVA::Factory("muRWELL_Class", outputFile, "!V:!Silent:Color:DrawProgressBar:AnalysisType=Classification" );
+    
+    TMVA::DataLoader *dataloader=new TMVA::DataLoader("dataset");
+    
+    // Variables
+    dataloader->AddVariable("t_hit_diff := GemHit_time[GemCluster1d_HitIndex[][1]]-GemHit_time[GemCluster1d_ID_Hit_High_Q[]]", "Hit Times Difference", "ns", 'F');
+    dataloader->AddVariable("ratio := GemCluster1d_dx/GemCluster1d_nHit", "Cluster 1D dx/size", "mm", 'F');
+    
+    dataloader->AddVariable("GemCluster1d_q", "Cluster 1D Charge"  , "", 'F');
+    
+    dataloader->AddVariable("GemCluster1d_t0", "Cluster 1D First Time", "ns", 'F');
+    
+    // Spectators
+    dataloader->AddSpectator("GemCluster1d_tF"   , "Cluster 1D Last Time", "ns", 'F');
+    dataloader->AddSpectator("GemCluster1d_nHit" , "cluster_1d size"     , ""  , 'I');
+    dataloader->AddSpectator("GemCluster1d_x"    , "cluster_1d position" , "mm", 'F');
+    dataloader->AddSpectator("GemCluster1d_dx"   , "cluster_1d pos err"  , "mm", 'F');
+    dataloader->AddSpectator("GemCluster1d_plane", "cluster_1d plane ID" ,       'I');
+    dataloader->AddSpectator("GemCluster1d_view" , "cluster_1d view ID"  ,       'I');
+    
+    dataloader->AddSpectator("GemCluster1d_isSigCluster", "cluster_1d sigTag", 'F');
+    dataloader->AddSpectator("GemCluster1d_isBkgCluster", "cluster_1d bkgTag", 'F');
+    
+    
+    Double_t signalWeight = 1.0;
+    dataloader->AddSignalTree    (signalTree, signalWeight);
+    
+    Double_t noiseWeight  = 1.0;
+    dataloader->AddBackgroundTree(noiseTree , noiseWeight );
+    
+    TCut sigTag = "isSigCluster == 1";
+    TCut bkgTag = "isBkgCluster != 0";
+    dataloader->PrepareTrainingAndTestTree(sigTag, bkgTag, "nTrain_Signal=XXXXX:nTrain_Background=YYYYYY:SplitSeed=0:SplitMode=Random:NormMode=NumEvents:!V");
+    
+    // AdaBoost with Bagging
+    factory->BookMethod(dataloader, TMVA::Types::kBDT, "BDT_B" , "!H:!V:NTrees=1000:MinNodeSize=5%:MaxDepth=2:BoostType=AdaBoost:AdaBoostBeta=0.25:UseBaggedBoost=True:BaggedSampleFraction=0.5:SeparationType=GiniIndex:nCuts=-1:CreateMVAPdfs=True");
+    
+    factory->TrainAllMethods();
+    factory->TestAllMethods();
+    factory->EvaluateAllMethods();
+    
+    outputFile->Close();
+    
+    std::cout << "==> Wrote root file: " << outputFile->GetName() << std::endl;
+    std::cout << "==> DONE!" << std::endl;
+    
+    delete factory;
+    delete dataloader;
+    
+    // Launch the GUI
+    // if (!gROOT->IsBatch()) TMVA::TMVAGui("OutputClassification_Detector_w_Specifics.root");
+  }
+  
+  if(Reader_Too == true) {
+    
+    TMVA::Reader *reader = new TMVA::Reader("!Color:!Silent");
+    
+    Float_t local_GemCluster1d_q, local_t_hit_diff, local_ratio, local_GemCluster1d_t0, local_GemCluster1d_tF;
+    Float_t local_GemCluster1d_nHit, local_GemCluster1d_x, local_GemCluster1d_dx, local_GemCluster1d_plane, local_GemCluster1d_view;
+    Float_t local_isSigCluster, local_isBkgCluster;
+    
+    // Variables
+    reader->AddVariable("t_hit_diff := GemHit_time[GemCluster1d_HitIndex[][1]]-GemHit_time[GemCluster1d_ID_Hit_High_Q[]]", &local_t_hit_diff);
+    reader->AddVariable("ratio := GemCluster1d_dx/GemCluster1d_nHit"                                                     , &local_ratio     );
+    
+    reader->AddVariable("GemCluster1d_q" , &local_GemCluster1d_q );
+    reader->AddVariable("GemCluster1d_t0", &local_GemCluster1d_t0);
+    
+    // Spectators
+    reader->AddSpectator("GemCluster1d_tF"   , &local_GemCluster1d_tF   );
+    reader->AddSpectator("GemCluster1d_nHit" , &local_GemCluster1d_nHit );
+    reader->AddSpectator("GemCluster1d_x"    , &local_GemCluster1d_x    );
+    reader->AddSpectator("GemCluster1d_dx"   , &local_GemCluster1d_dx   );
+    reader->AddSpectator("GemCluster1d_plane", &local_GemCluster1d_plane);
+    reader->AddSpectator("GemCluster1d_view" , &local_GemCluster1d_view );
+        
+    reader->AddSpectator("GemCluster1d_isSigCluster", &local_isSigCluster);
+    reader->AddSpectator("GemCluster1d_isBkgCluster", &local_isBkgCluster);
+    
+    reader->BookMVA("BDT_B method", "dataset/weights/muRWELL_Class_BDT_B.weights.xml" );
+    
+    TFile *input(0);
+    TString fname = "rootFiles/TEST_evt_runXXX.root";
+    if (!gSystem->AccessPathName( fname )) {
+      input = TFile::Open( fname );
+    }
+    else if (!input) {
+      std::cout << "ERROR: could not open data file" << std::endl;
+      exit(1);
+    }
+    std::cout << "--- Using input file: " << input->GetName() << std::endl;
+    
+    std::cout << "--- Select signal sample" << std::endl;
+    TTree* theTree = (TTree*)input->Get("t1");
+    
+    Int_t nGemCluster, nGemHit;
+    Double_t GemHit_time[100];
+    Int_t GemHit_HitIndex[100][30], GemHit_HighQ_HitIndex[100];
+    Double_t GemCluster1d_q[100], GemCluster1d_t0[100], GemCluster1d_tF[100], GemCluster1d_x[100], GemCluster1d_dx[100];
+    Int_t GemCluster1d_nHit[100], GemCluster1d_plane[100], GemCluster1d_view[100];
+    Double_t GemCluster1d_isSigCluster[100], GemCluster1d_isBkgCluster[100];
+    
+    theTree->SetBranchAddress("nGemHit" , &nGemHit );
+    
+    theTree->SetBranchAddress("GemHit_time"               , &GemHit_time);
+    theTree->SetBranchAddress("GemCluster1d_HitIndex"     , &GemHit_HitIndex);
+    theTree->SetBranchAddress("GemCluster1d_ID_Hit_High_Q", &GemHit_HighQ_HitIndex);
+    
+    theTree->SetBranchAddress("nGemCluster" , &nGemCluster );
+    
+    theTree->SetBranchAddress("GemCluster1d_q" , &GemCluster1d_q );
+    theTree->SetBranchAddress("GemCluster1d_t0", &GemCluster1d_t0);
+    theTree->SetBranchAddress("GemCluster1d_tF", &GemCluster1d_tF);
+    
+    theTree->SetBranchAddress("GemCluster1d_nHit" , &GemCluster1d_nHit );
+    theTree->SetBranchAddress("GemCluster1d_x"    , &GemCluster1d_x    );
+    theTree->SetBranchAddress("GemCluster1d_dx"   , &GemCluster1d_dx  );
+    theTree->SetBranchAddress("GemCluster1d_plane", &GemCluster1d_plane);
+    theTree->SetBranchAddress("GemCluster1d_view" , &GemCluster1d_view );
+    
+    theTree->SetBranchAddress("GemCluster1d_isSigCluster", &GemCluster1d_isSigCluster);
+    theTree->SetBranchAddress("GemCluster1d_isBkgCluster", &GemCluster1d_isBkgCluster);
+      
+    TFile *target = new TFile("BDT_Classification_Detecor_w_Specifics.root","RECREATE" );
+    TTree *evt = new TTree("evt", "evt");
+
+    Float_t val_MVA, err_MVA, pSig, rarity;
+    
+    evt->Branch("GemCluster1d_q" , &local_GemCluster1d_q , "GemCluster1d_q");
+    evt->Branch("GemCluster1d_t0", &local_GemCluster1d_t0, "GemCluster1d_t0");
+    evt->Branch("GemCluster1d_tF", &local_GemCluster1d_tF, "GemCluster1d_tF");
+    
+    evt->Branch("GemCluster1d_nHit" , &local_GemCluster1d_nHit , "GemCluster1d_nHit" );
+    evt->Branch("GemCluster1d_x"    , &local_GemCluster1d_x    , "GemCluster1d_x"    );
+    evt->Branch("GemCluster1d_dx"   , &local_GemCluster1d_dx   , "GemCluster1d_dx"   );
+    evt->Branch("GemCluster1d_plane", &local_GemCluster1d_plane, "GemCluster1d_plane");
+    evt->Branch("GemCluster1d_view" , &local_GemCluster1d_view , "GemCluster1d_view" );
+
+    evt->Branch("GemCluster1d_t_hit_diff"  , &local_t_hit_diff, "t_hit_diff");
+    evt->Branch("GemCluster1d_dx_over_nHit", &local_ratio     , "ratio"     );
+
+    evt->Branch("isSigCluster", &local_isSigCluster, "isSigCluster");
+    evt->Branch("isBkgCluster", &local_isBkgCluster, "isBkgCluster");
+    
+    evt->Branch("val_MVA", &val_MVA , "val_MVA");
+    evt->Branch("err_MVA", &err_MVA , "err_MVA");
+    evt->Branch("pSig"   , &pSig    , "pSig"   );
+    evt->Branch("rarity" , &rarity  , "rarity" );
+
+    for (Long64_t ievt=0; ievt < theTree->GetEntries(); ievt++) {
+      
+      if (ievt%10000 == 0) std::cout << "Processing event: " << ievt << std::endl;
+      
+      theTree->GetEntry(ievt);
+      
+      for(int i_Cluster = 0; i_Cluster < nGemCluster; i_Cluster++) {
+        
+        for(int i_Hit = 0; i_Hit < nGemHit; i_Hit++) {
+          local_t_hit_diff = GemHit_time[GemHit_HitIndex[i_Cluster][1]] - GemHit_time[GemHit_HighQ_HitIndex[i_Cluster]];
+        }
+        
+        local_GemCluster1d_q    = (Float_t)GemCluster1d_q[i_Cluster]   ;
+        local_GemCluster1d_nHit = (Float_t)GemCluster1d_nHit[i_Cluster];
+        
+        local_GemCluster1d_t0 = (Float_t)GemCluster1d_t0[i_Cluster];
+        local_GemCluster1d_tF = (Float_t)GemCluster1d_tF[i_Cluster];
+        
+        local_GemCluster1d_x     = (Float_t)GemCluster1d_x[i_Cluster]    ;
+        local_GemCluster1d_dx    = (Float_t)GemCluster1d_dx[i_Cluster]   ;
+        local_GemCluster1d_plane = (Float_t)GemCluster1d_plane[i_Cluster];
+        local_GemCluster1d_view  = (Float_t)GemCluster1d_view[i_Cluster] ;
+        
+        local_isSigCluster = (Float_t)GemCluster1d_isSigCluster[i_Cluster];
+        local_isBkgCluster = (Float_t)GemCluster1d_isBkgCluster[i_Cluster];
+        
+        local_ratio = (Float_t)(GemCluster1d_dx[i_Cluster]/GemCluster1d_nHit[i_Cluster]);
+        
+        val_MVA = (Float_t)reader->EvaluateMVA("BDT_B method");
+        err_MVA = (Float_t)reader->GetMVAError()              ;
+        pSig    = (Float_t)reader->GetProba("BDT_B method")   ;
+        rarity  = (Float_t)reader->GetRarity("BDT_B method")  ;
+        
+        evt->Fill();
+        
+      }
+    }
+
+    target->Write();
+    target->Close();
+    
+    std::cout << "--- Created root file: \"BDT_Classification_Detecor_w_Specifics.root\" containing the MVA output histograms" << std::endl;
+    
+    delete reader;
+  }
+  
+  std::cout << "==> Done with Classification!" << std::endl;
+  
+  return 0;
+}
+
+int main( int argc, char** argv )
+{
+  return muRWELL_Class();
+}
